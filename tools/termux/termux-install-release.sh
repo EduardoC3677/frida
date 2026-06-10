@@ -115,11 +115,20 @@ cut -f1 assets.tsv | sed 's/^/    /'
 asset_url() {
     awk -F'\t' -v pat="$1" '$1 ~ pat {print $2; exit}' assets.tsv
 }
-fetch() {  # fetch <pattern> <destfile> ; returns 1 if not present
-    local url; url="$(asset_url "$1")"
-    [ -n "$url" ] || return 1
-    log "Downloading $(basename "$url")"
-    curl -fSL "${AUTH[@]}" "$url" -o "$2" || die "download failed: $url"
+# Pick an asset by a grep pattern over the asset name; echo its original name.
+asset_name() {
+    awk -F'\t' -v pat="$1" '$1 ~ pat {print $1; exit}' assets.tsv
+}
+# fetch <pattern> [outvar]
+# Downloads the matching asset KEEPING ITS ORIGINAL FILENAME (pip rejects
+# wheels that are not named like <name>-<version>-...-.whl). Stores the saved
+# path into the named variable if given. Returns 1 if no asset matches.
+fetch() {
+    local url name; url="$(asset_url "$1")"; name="$(asset_name "$1")"
+    [ -n "$url" ] && [ -n "$name" ] || return 1
+    log "Downloading $name"
+    curl -fSL "${AUTH[@]}" "$url" -o "$name" || die "download failed: $url"
+    if [ -n "${2:-}" ]; then printf -v "$2" '%s' "$WORK/$name"; fi
     return 0
 }
 
@@ -127,14 +136,14 @@ fetch() {  # fetch <pattern> <destfile> ; returns 1 if not present
 # 2. Verify checksums if SHA256SUMS.txt is present.
 # --------------------------------------------------------------------------
 HAVE_SUMS=0
-if fetch '^SHA256SUMS\.txt$' SHA256SUMS.txt 2>/dev/null; then HAVE_SUMS=1; fi
+if fetch '^SHA256SUMS[.]txt$' _SUMS_PATH 2>/dev/null; then HAVE_SUMS=1; fi
 
 verify() {  # verify <file>
     [ "$HAVE_SUMS" -eq 1 ] || return 0
-    local base; base="$(basename "$1")"
-    grep -q "  $base\$" SHA256SUMS.txt || { warn "no checksum listed for $base"; return 0; }
-    local want have
-    want="$(awk -v f="$base" '$2==f{print $1}' SHA256SUMS.txt)"
+    local base want have
+    base="$(basename "$1")"
+    want="$(awk -v f="$base" '$2==f {print $1; exit}' SHA256SUMS.txt)"
+    if [ -z "$want" ]; then warn "no checksum listed for $base"; return 0; fi
     have="$(sha256sum "$1" | awk '{print $1}')"
     [ "$want" = "$have" ] || die "checksum mismatch for $base"
     log "checksum OK: $base"
@@ -144,20 +153,20 @@ verify() {  # verify <file>
 # 3. Download the binding wheel + (optionally) frida-server.
 # --------------------------------------------------------------------------
 WHEEL=""
-if fetch 'frida-.*-abi3-android_.*\.whl$' binding.whl; then
-    WHEEL="$WORK/binding.whl"; verify "$WHEEL"
+if fetch 'frida-.*-abi3-android_.*[.]whl$' WHEEL; then
+    verify "$WHEEL"
 else
     warn "no binding wheel in the release; will rely on an already-installed frida module."
 fi
 
 SERVER_BIN=""
 if [ "$WANT_SERVER" -eq 1 ]; then
-    if fetch 'frida-server-.*-android-arm64$' frida-server; then
-        SERVER_BIN="$WORK/frida-server"; verify "$SERVER_BIN"; chmod 755 "$SERVER_BIN"
-    elif fetch 'frida_.*_aarch64\.deb$' frida.deb; then
-        verify "$WORK/frida.deb"
+    if fetch 'frida-server-.*-android-arm64$' SERVER_BIN; then
+        verify "$SERVER_BIN"; chmod 755 "$SERVER_BIN"
+    elif fetch 'frida_.*_aarch64[.]deb$' DEB_PATH; then
+        verify "$DEB_PATH"
         log "extracting frida-server from the .deb"
-        dpkg-deb -x frida.deb debroot 2>/dev/null || true
+        dpkg-deb -x "$DEB_PATH" debroot 2>/dev/null || true
         cand="debroot/data/data/com.termux/files/usr/bin/frida-server"
         [ -f "$cand" ] && { SERVER_BIN="$WORK/$cand"; chmod 755 "$SERVER_BIN"; }
     fi
@@ -165,8 +174,8 @@ if [ "$WANT_SERVER" -eq 1 ]; then
 fi
 
 TOOLS_WHEEL=""
-if fetch 'frida_tools-.*-py3-none-any\.whl$' tools.whl; then
-    TOOLS_WHEEL="$WORK/tools.whl"; verify "$TOOLS_WHEEL"
+if fetch 'frida_tools-.*-py3-none-any[.]whl$' TOOLS_WHEEL; then
+    verify "$TOOLS_WHEEL"
 else
     warn "no frida-tools wheel in the release; will fall back to PyPI."
 fi
