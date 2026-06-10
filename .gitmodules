@@ -27,4 +27,5 @@
 	url = https://github.com/frida/frida-go
 [submodule "releng"]
 	path = releng
-	url = https://github.com/frida/releng.git
+	url = https://github.com/EduardoC3677/releng.git
+	branch = termux-native
