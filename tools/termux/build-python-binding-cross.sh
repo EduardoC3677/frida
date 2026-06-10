@@ -200,9 +200,13 @@ WHEEL_VER="${VER/-dev./.dev}"
 log "Building frida wheel version $WHEEL_VER ..."
 
 if python3 -c "import wheel" 2>/dev/null && python3 -c "import setuptools" 2>/dev/null; then
+    # Termux's Python reports its platform as linux_<arch> (it runs on Bionic,
+    # same C library the NDK targets), so tag the wheel linux_<arch> — that is
+    # what Termux's pip accepts. An android_* tag is rejected with
+    # "not a supported wheel on this platform".
     ( cd "$PYBINDING" && \
         FRIDA_EXTENSION="$SO_OUT" FRIDA_VERSION="$WHEEL_VER" \
-        python3 setup.py bdist_wheel --plat-name "android_${NDK_API}_${DEB_ARCH}" \
+        python3 setup.py bdist_wheel --plat-name "linux_${DEB_ARCH}" \
             --dist-dir "$OUT_DIR" >/dev/null ) \
         && log "Wheel built in $OUT_DIR" \
         || warn "bdist_wheel failed; falling back to .so output"

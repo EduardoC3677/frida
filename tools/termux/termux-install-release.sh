@@ -152,9 +152,66 @@ verify() {  # verify <file>
 # --------------------------------------------------------------------------
 # 3. Download the binding wheel + (optionally) frida-server.
 # --------------------------------------------------------------------------
+
+# retag_wheel <wheel_path>
+# The binding wheel ships with a fixed platform tag (e.g. android_24_aarch64 or
+# linux_aarch64). Termux's pip only installs a wheel whose platform tag is in
+# `pip debug --verbose` (typically linux_aarch64 / manylinux...). If the wheel's
+# tag is not accepted as-is, rewrite the wheel's tag to the local interpreter's
+# platform tag so pip installs it. The .so inside is Bionic arm64 either way
+# (Termux and the NDK share the same C library), so this is purely cosmetic for
+# pip's gatekeeping. Echoes the path to install (original or retagged).
+retag_wheel() {
+    local whl="$1" base local_tag
+    base="$(basename "$whl")"
+
+    # The wheel's own platform tag is the last "-" field before .whl.
+    local cur_tag="${base%.whl}"; cur_tag="${cur_tag##*-}"
+
+    # Is the wheel's tag already accepted by this pip? (compatible-tags list)
+    if pip debug --verbose 2>/dev/null | grep -qw "$cur_tag"; then
+        echo "$whl"; return 0
+    fi
+
+    # Local platform tag, e.g. linux_aarch64.
+    local_tag="$(python3 - <<'PY'
+import sysconfig
+print(sysconfig.get_platform().replace("-", "_").replace(".", "_"))
+PY
+)"
+    [ -n "$local_tag" ] || { echo "$whl"; return 0; }
+
+    log "Retagging wheel platform $cur_tag -> $local_tag for this pip" >&2
+
+    # Rewrite the wheel: rename the file + patch the internal dist-info/WHEEL
+    # "Tag:" lines. Pure-Python (zipfile), no external `wheel` CLI needed.
+    local newbase="${base%-${cur_tag}.whl}-${local_tag}.whl"
+    local newpath="$(dirname "$whl")/$newbase"
+    python3 - "$whl" "$newpath" "$cur_tag" "$local_tag" <<'PY'
+import sys, zipfile, os
+src, dst, old, new = sys.argv[1:5]
+tmp = dst + ".tmp"
+with zipfile.ZipFile(src) as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+    for it in zin.infolist():
+        data = zin.read(it.filename)
+        if it.filename.endswith(".dist-info/WHEEL"):
+            text = data.decode("utf-8")
+            out = []
+            for line in text.splitlines(keepends=True):
+                if line.startswith("Tag:"):
+                    line = line.replace(old, new)
+                out.append(line)
+            data = "".join(out).encode("utf-8")
+        zout.writestr(it, data)
+os.replace(tmp, dst)
+PY
+    [ -f "$newpath" ] && { echo "$newpath"; return 0; }
+    echo "$whl"
+}
 WHEEL=""
-if fetch 'frida-.*-abi3-android_.*[.]whl$' WHEEL; then
+if fetch 'frida-.*-abi3-(android|linux)_.*[.]whl$' WHEEL; then
     verify "$WHEEL"
+    WHEEL="$(retag_wheel "$WHEEL")"
 else
     warn "no binding wheel in the release; will rely on an already-installed frida module."
 fi
