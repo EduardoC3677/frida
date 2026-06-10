@@ -3,7 +3,7 @@ name: Termux release (arm64)
 # Cross-compiles Frida for Android/Termux arm64 on a Linux x86_64 runner with
 # the official Android NDK r29, then publishes a GitHub Release containing:
 #   - frida_<ver>_aarch64.deb                              (frida-server/inject/gadget)
-#   - frida-<ver>-cp37-abi3-android_24_aarch64.whl         (the `frida` Python binding)
+#   - frida-<ver>-cp37-abi3-linux_aarch64.whl              (the `frida` Python binding)
 #   - frida-server-<ver>-android-arm64                     (raw server binary)
 #   - frida-gadget-<ver>-android-arm64.so                  (raw gadget)
 #   - termux-install-release.sh                            (on-device installer)
@@ -173,7 +173,7 @@ jobs:
 
             ## What's in here
             - `frida_${{ steps.vars.outputs.frida_version }}_aarch64.deb` — frida-server, frida-inject, frida-gadget (native arm64, run as root).
-            - `frida-${{ steps.vars.outputs.frida_version }}*-abi3-android_24_aarch64.whl` — the `frida` Python binding (`_frida`) for Termux's Python (abi3, any Python 3.x).
+            - `frida-${{ steps.vars.outputs.frida_version }}*-abi3-linux_aarch64.whl` — the `frida` Python binding (`_frida`) for Termux's Python (abi3, any Python 3.x).
             - `frida_tools-*-py3-none-any.whl` — the `frida-tools` CLI (frida, frida-ps, frida-trace, ...) built from source with its JS agents/bridges bundled (no PyPI needed).
             - `frida-server-${{ steps.vars.outputs.frida_version }}-android-arm64` — raw server binary.
             - `frida-gadget-${{ steps.vars.outputs.frida_version }}-android-arm64.so` — raw gadget.
@@ -199,7 +199,7 @@ jobs:
             binding ships prebuilt in the wheel above.
           files: |
             dist/*.deb
-            dist/frida-*-abi3-android_*.whl
+            dist/frida-*-abi3-linux_*.whl
             dist/frida_tools-*-py3-none-any.whl
             dist/frida-server-*-android-arm64
             dist/frida-gadget-*-android-arm64.so

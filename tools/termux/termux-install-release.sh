@@ -8,7 +8,7 @@
 # `frida-server` is staged for root.
 #
 # It fetches:
-#   - the frida binding wheel  (frida-*-abi3-android_*_aarch64.whl)
+#   - the frida binding wheel  (frida-*-abi3-linux_aarch64.whl)
 #   - the .deb                 (frida_*_aarch64.deb)  -> for frida-server/inject/gadget
 #   - the raw frida-server     (frida-server-*-android-arm64), staged via su
 # then installs frida-tools, verifies `import frida`, and writes the helper

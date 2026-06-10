@@ -23,7 +23,7 @@
 #   bash termux-setup-remote.sh --wheel frida-*.whl --server frida-server \
 #        [--port 27042] [--server-dir /data/local/tmp]
 #
-# --wheel    path to the cross-built frida-*-abi3-android_*_aarch64.whl
+# --wheel    path to the cross-built frida-*-abi3-linux_aarch64.whl
 # --server   path to the cross-built arm64 frida-server binary
 # --port     TCP port frida-server listens on (default 27042)
 # --server-dir  where to stage frida-server for root (default /data/local/tmp)

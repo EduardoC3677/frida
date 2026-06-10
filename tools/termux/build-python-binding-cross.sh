@@ -15,7 +15,7 @@
 # any Python 3.x in Termux.
 #
 # Output:
-#   dist/frida-<ver>-cp37-abi3-android_<api>_aarch64.whl  (or a plain copy of
+#   dist/frida-<ver>-cp37-abi3-linux_aarch64.whl         (or a plain copy of
 #   the .so under dist/_frida.abi3.so if --so-only is given)
 #
 # Usage:
