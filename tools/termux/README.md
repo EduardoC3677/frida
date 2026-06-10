@@ -16,6 +16,51 @@ pero Termux corre sin privilegios. Por eso el server vive en el lado Android
 
 ---
 
+## La vía más fácil — instalar desde un GitHub Release
+
+No hace falta compilar nada en el teléfono. El workflow
+`.github/workflows/termux-release.yml` cross-compila todo en CI (NDK r29) y
+publica un **Release** con el `.deb`, el wheel del binding, los binarios crudos
+y este instalador. En el teléfono, una sola línea:
+
+```bash
+# instala binding + frida-tools + frida-server (root) desde el último release:
+curl -fsSL https://github.com/EduardoC3677/frida/releases/latest/download/termux-install-release.sh | bash
+```
+
+O, si ya clonaste el repo en Termux:
+
+```bash
+bash tools/termux/termux-install-release.sh            # último release
+bash tools/termux/termux-install-release.sh --tag termux-v17.12.1
+bash tools/termux/termux-install-release.sh --no-server # solo tools en Termux
+```
+
+El instalador descarga los assets vía la API de GitHub, verifica los
+`SHA256SUMS.txt`, instala el wheel + `frida-tools`, comprueba que `import frida`
+funciona, coloca `frida-server` con `su` y crea `frida-server-start` /
+`frida-remote`. Luego:
+
+```bash
+frida-server-start                 # arranca frida-server como root en :27042
+frida-ps -H 127.0.0.1:27042        # o: frida-remote ps
+```
+
+### Generar el release (mantenedor)
+
+En GitHub: pestaña **Actions → Termux release (arm64) → Run workflow**, o empuja
+un tag `termux-v*`:
+
+```bash
+git tag termux-v17.12.1 && git push origin termux-v17.12.1
+```
+
+El job corre en `ubuntu-24.04`, descarga el NDK r29, ejecuta
+`build-deb-cross.sh` + `build-python-binding-cross.sh` y sube los artefactos al
+release. Requiere el permiso `contents: write` (ya declarado en el workflow).
+
+---
+
 ## Por qué `pip install frida` falla en Termux
 
 `frida-tools` es Python puro, pero depende del módulo `frida`, que es la

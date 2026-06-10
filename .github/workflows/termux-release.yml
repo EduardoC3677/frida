@@ -1,0 +1,170 @@
+name: Termux release (arm64)
+
+# Cross-compiles Frida for Android/Termux arm64 on a Linux x86_64 runner with
+# the official Android NDK r29, then publishes a GitHub Release containing:
+#   - frida_<ver>_aarch64.deb                              (frida-server/inject/gadget)
+#   - frida-<ver>-cp37-abi3-android_24_aarch64.whl         (the `frida` Python binding)
+#   - frida-server-<ver>-android-arm64                     (raw server binary)
+#   - frida-gadget-<ver>-android-arm64.so                  (raw gadget)
+#   - termux-install-release.sh                            (on-device installer)
+#   - SHA256SUMS.txt
+#
+# Trigger it manually (Actions tab -> "Run workflow") or by pushing a tag like
+# `termux-v17.12.1`. On the phone, install everything with the companion script:
+#   tools/termux/termux-install-release.sh   (also attached to the release)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create/update (blank = termux-v<frida version>)"
+        required: false
+        default: ""
+      prerelease:
+        description: "Mark the release as a pre-release"
+        type: boolean
+        required: false
+        default: true
+  push:
+    tags:
+      - "termux-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-arm64:
+    runs-on: ubuntu-24.04
+    env:
+      NDK_VERSION: r29
+      PY_TAG: "3.13"
+      ARCH: arm64
+      DEB_ARCH: aarch64
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install host build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ninja-build dpkg-dev python3 python3-pip \
+            python3-setuptools python3-wheel curl unzip file
+          python3 -m pip install --upgrade --user setuptools wheel
+
+      - name: Cache Android NDK ${{ env.NDK_VERSION }}
+        id: cache-ndk
+        uses: actions/cache@v4
+        with:
+          path: ~/android-ndk
+          key: android-ndk-${{ env.NDK_VERSION }}
+
+      - name: Download Android NDK ${{ env.NDK_VERSION }}
+        if: steps.cache-ndk.outputs.cache-hit != 'true'
+        run: |
+          set -euxo pipefail
+          mkdir -p "$HOME/android-ndk"
+          url="https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip"
+          curl -fSL "$url" -o /tmp/ndk.zip
+          unzip -q /tmp/ndk.zip -d "$HOME/android-ndk"
+          rm -f /tmp/ndk.zip
+
+      - name: Resolve NDK root and Frida version
+        id: vars
+        run: |
+          set -euxo pipefail
+          ndk_root="$(find "$HOME/android-ndk" -maxdepth 2 -name source.properties -printf '%h\n' | head -1)"
+          [ -n "$ndk_root" ] || { echo "NDK not found"; exit 1; }
+          echo "ANDROID_NDK_ROOT=$ndk_root" >> "$GITHUB_ENV"
+          ver="$(python3 releng/frida_version.py 2>/dev/null | head -1 | tr -d '[:space:]')"
+          [ -n "$ver" ] || ver="0.0.0"
+          echo "frida_version=$ver" >> "$GITHUB_OUTPUT"
+          tag="${{ github.event.inputs.tag }}"
+          if [ -z "$tag" ]; then
+            case "${GITHUB_REF}" in
+              refs/tags/*) tag="${GITHUB_REF#refs/tags/}" ;;
+              *)           tag="termux-v${ver}" ;;
+            esac
+          fi
+          echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Build Termux .deb (frida-server/inject/gadget, arm64)
+        run: |
+          set -euxo pipefail
+          bash tools/termux/build-deb-cross.sh --arch "$ARCH" --jobs "$(nproc)"
+
+      - name: Build frida Python binding wheel (arm64, abi3)
+        run: |
+          set -euxo pipefail
+          bash tools/termux/build-python-binding-cross.sh \
+            --arch "$ARCH" --py-tag "$PY_TAG" --jobs "$(nproc)"
+
+      - name: Stage raw server/gadget + installer + checksums
+        id: stage
+        run: |
+          set -euxo pipefail
+          ver="${{ steps.vars.outputs.frida_version }}"
+          out="dist"
+          bd="build-android-${ARCH}"
+          # frida host triplet build dir is build-android-arm64
+          srv="$bd/subprojects/frida-core/server/frida-server"
+          gad="$bd/subprojects/frida-core/lib/gadget/frida-gadget.so"
+          [ -f "$srv" ] && cp "$srv" "$out/frida-server-${ver}-android-arm64" || true
+          [ -f "$gad" ] && cp "$gad" "$out/frida-gadget-${ver}-android-arm64.so" || true
+          cp tools/termux/termux-install-release.sh "$out/termux-install-release.sh"
+          ( cd "$out" && sha256sum * > SHA256SUMS.txt )
+          echo "release_dir=$out" >> "$GITHUB_OUTPUT"
+          ls -lh "$out"
+          file "$out"/frida-server-* "$out"/*.whl 2>/dev/null || true
+
+      - name: Upload build artifacts (for non-release runs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida-termux-arm64
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.release_tag }}
+          name: "Frida for Termux ${{ steps.vars.outputs.frida_version }} (arm64)"
+          prerelease: ${{ github.event.inputs.prerelease != 'false' }}
+          fail_on_unmatched_files: true
+          generate_release_notes: false
+          body: |
+            Cross-compiled Frida for **Android / Termux arm64** (NDK ${{ env.NDK_VERSION }}).
+
+            ## What's in here
+            - `frida_${{ steps.vars.outputs.frida_version }}_aarch64.deb` — frida-server, frida-inject, frida-gadget (native arm64, run as root).
+            - `frida-${{ steps.vars.outputs.frida_version }}*-abi3-android_24_aarch64.whl` — the `frida` Python binding (`_frida`) for Termux's Python (abi3, any Python 3.x).
+            - `frida-server-${{ steps.vars.outputs.frida_version }}-android-arm64` — raw server binary.
+            - `frida-gadget-${{ steps.vars.outputs.frida_version }}-android-arm64.so` — raw gadget.
+            - `termux-install-release.sh` — one-shot on-device installer.
+            - `SHA256SUMS.txt`
+
+            ## Install on the phone (Termux), one line
+            ```sh
+            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.vars.outputs.release_tag }}/termux-install-release.sh | bash
+            ```
+            Then:
+            ```sh
+            frida-server-start                     # starts frida-server as root (su)
+            frida-ps -H 127.0.0.1:27042            # or: frida-remote ps
+            ```
+
+            ## Architecture
+            `frida-server` runs as **root** on the Android side; `frida` + `frida-tools`
+            run in **Termux** and talk to it over TCP `127.0.0.1:27042`. `pip install frida`
+            cannot build the `_frida` binding on-device (needs the frida-core devkit), so the
+            binding ships prebuilt in the wheel above.
+          files: |
+            dist/*.deb
+            dist/*.whl
+            dist/frida-server-*-android-arm64
+            dist/frida-gadget-*-android-arm64.so
+            dist/termux-install-release.sh
+            dist/SHA256SUMS.txt
