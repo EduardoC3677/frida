@@ -84,33 +84,56 @@ jobs:
           ndk_root="$(find "$HOME/android-ndk" -maxdepth 2 -name source.properties -printf '%h\n' | head -1)"
           [ -n "$ndk_root" ] || { echo "NDK not found"; exit 1; }
           echo "ANDROID_NDK_ROOT=$ndk_root" >> "$GITHUB_ENV"
-          ver="$(python3 releng/frida_version.py 2>/dev/null | head -1 | tr -d '[:space:]')"
-          [ -n "$ver" ] || ver="0.0.0"
-          echo "frida_version=$ver" >> "$GITHUB_OUTPUT"
+
+          # Resolve the release tag first (workflow input > pushed tag > derived).
           tag="${{ github.event.inputs.tag }}"
           if [ -z "$tag" ]; then
             case "${GITHUB_REF}" in
               refs/tags/*) tag="${GITHUB_REF#refs/tags/}" ;;
-              *)           tag="termux-v${ver}" ;;
             esac
           fi
+
+          # Derive the package version from the tag when it looks like
+          # `termux-vX.Y.Z[-suffix]` (or `vX.Y.Z` / bare `X.Y.Z`). This keeps the
+          # binaries/wheels/.deb from being stamped 0.0.0 when the CI checkout has
+          # no git tags (fetch-depth: 1). Fall back to frida_version.py, then 0.0.0.
+          ver=""
+          if [ -n "$tag" ]; then
+            cand="${tag#termux-}"   # termux-vX.Y.Z -> vX.Y.Z
+            cand="${cand#v}"        # vX.Y.Z        -> X.Y.Z
+            case "$cand" in
+              [0-9]*.[0-9]*.[0-9]*) ver="$cand" ;;
+            esac
+          fi
+          if [ -z "$ver" ]; then
+            ver="$(python3 releng/frida_version.py 2>/dev/null | head -1 | tr -d '[:space:]')"
+          fi
+          [ -n "$ver" ] || ver="0.0.0"
+
+          # If still no tag (manual run without input on a branch), derive it from ver.
+          [ -n "$tag" ] || tag="termux-v${ver}"
+
+          echo "frida_version=$ver" >> "$GITHUB_OUTPUT"
           echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Build Termux .deb (frida-server/inject/gadget, arm64)
         run: |
           set -euxo pipefail
-          bash tools/termux/build-deb-cross.sh --arch "$ARCH" --jobs "$(nproc)"
+          bash tools/termux/build-deb-cross.sh --arch "$ARCH" --jobs "$(nproc)" \
+            --version "${{ steps.vars.outputs.frida_version }}"
 
       - name: Build frida Python binding wheel (arm64, abi3)
         run: |
           set -euxo pipefail
           bash tools/termux/build-python-binding-cross.sh \
-            --arch "$ARCH" --py-tag "$PY_TAG" --jobs "$(nproc)"
+            --arch "$ARCH" --py-tag "$PY_TAG" --jobs "$(nproc)" \
+            --version "${{ steps.vars.outputs.frida_version }}"
 
       - name: Build frida-tools wheel (universal, with JS agents)
         run: |
           set -euxo pipefail
-          bash tools/termux/build-tools-wheel.sh --jobs "$(nproc)"
+          bash tools/termux/build-tools-wheel.sh --jobs "$(nproc)" \
+            --version "${{ steps.vars.outputs.frida_version }}"
 
       - name: Stage raw server/gadget + installer + checksums
         id: stage

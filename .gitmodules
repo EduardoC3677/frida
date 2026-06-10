@@ -22,7 +22,8 @@
 	url = https://github.com/frida/frida-qml.git
 [submodule "frida-tools"]
 	path = subprojects/frida-tools
-	url = https://github.com/frida/frida-tools.git
+	url = https://github.com/EduardoC3677/frida-tools.git
+	branch = termux-version
 [submodule "frida-go"]
 	path = subprojects/frida-go
 	url = https://github.com/frida/frida-go

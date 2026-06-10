@@ -39,6 +39,7 @@ PY_TAG="3.13"
 PYTHON_DEB=""
 OUT_DIR="$SOURCE_ROOT/dist"
 SO_ONLY=0
+PKG_VERSION=""
 
 log()  { printf '\033[1;32m[*]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*"; }
@@ -57,6 +58,8 @@ while [ $# -gt 0 ]; do
         --out) OUT_DIR="$2"; shift 2 ;;
         --out=*) OUT_DIR="${1#*=}"; shift ;;
         --so-only) SO_ONLY=1; shift ;;
+        --version) PKG_VERSION="$2"; shift 2 ;;
+        --version=*) PKG_VERSION="${1#*=}"; shift ;;
         -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) die "Unknown option: $1" ;;
     esac
@@ -186,7 +189,11 @@ fi
 #    setup.py's FridaPrebuiltExt just copies $FRIDA_EXTENSION into the wheel.
 # --------------------------------------------------------------------------
 PYBINDING="$SOURCE_ROOT/subprojects/frida-python"
-VER="$(python3 "$SOURCE_ROOT/releng/frida_version.py" 2>/dev/null | head -n1 | tr -d '[:space:]')"
+if [ -n "$PKG_VERSION" ]; then
+    VER="$PKG_VERSION"
+else
+    VER="$(python3 "$SOURCE_ROOT/releng/frida_version.py" 2>/dev/null | head -n1 | tr -d '[:space:]')"
+fi
 [ -z "$VER" ] && VER="0.0.0"
 # PEP 440: dev marker uses '.devN', not '-dev.N'
 WHEEL_VER="${VER/-dev./.dev}"

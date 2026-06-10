@@ -29,6 +29,7 @@ SOURCE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 JOBS="$(nproc 2>/dev/null || echo 4)"
 OUT_DIR="$SOURCE_ROOT/dist"
+PKG_VERSION=""
 
 log()  { printf '\033[1;32m[*]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*"; }
@@ -40,6 +41,8 @@ while [ $# -gt 0 ]; do
         --jobs=*) JOBS="${1#*=}"; shift ;;
         --out) OUT_DIR="$2"; shift 2 ;;
         --out=*) OUT_DIR="${1#*=}"; shift ;;
+        --version) PKG_VERSION="$2"; shift 2 ;;
+        --version=*) PKG_VERSION="${1#*=}"; shift ;;
         -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) die "Unknown option: $1" ;;
     esac
@@ -88,6 +91,10 @@ log "Built $built_agents JS agent(s)."
 # --------------------------------------------------------------------------
 mkdir -p "$OUT_DIR"
 log "Building frida-tools wheel ..."
+if [ -n "$PKG_VERSION" ]; then
+    log "Forcing frida-tools version: $PKG_VERSION"
+    export FRIDA_VERSION="$PKG_VERSION"
+fi
 python3 setup.py bdist_wheel --dist-dir "$OUT_DIR" >/dev/null \
     || die "bdist_wheel failed"
 
