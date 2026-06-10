@@ -76,12 +76,32 @@ else
     log "All base packages already present."
 fi
 
-# Frida needs its Vala fork; Termux's vala is usually fine for building the
-# binding but frida-core needs the frida-optimised valac. Try Termux's vala;
-# the build will tell us if a fork is required.
+# Frida needs its Vala fork to build frida-core (server/gadget) AND the
+# _frida Python binding. Vala is itself written in Vala, so a bootstrap valac
+# must already exist. Try a few Termux package names.
 if ! command -v valac >/dev/null 2>&1; then
-    warn "valac not found; installing Termux 'vala' (frida-core may require the frida fork)."
-    pkg install -y vala || warn "Could not install vala; frida-core build may fail."
+    warn "valac not found; trying to install a Vala compiler from Termux..."
+    for vp in vala vala-bootstrap libvala; do
+        if pkg install -y "$vp" 2>/dev/null && command -v valac >/dev/null 2>&1; then
+            log "Installed Vala via package '$vp'."
+            break
+        fi
+    done
+fi
+if command -v valac >/dev/null 2>&1; then
+    log "Vala compiler: $(command -v valac) ($(valac --version 2>/dev/null | head -1))"
+    case "$(valac --version 2>/dev/null)" in
+        *frida*) log "Detected Frida-optimised Vala fork (good)." ;;
+        *) warn "This valac is NOT the Frida fork. frida-core may fail to \
+build; frida-server/gadget need the fork. The Python binding + CLI tools \
+may still build. If frida-core fails, build Frida's Vala fork first \
+(https://github.com/frida/vala) or use --without-prebuilds and let releng \
+build it from the toolchain bundle." ;;
+    esac
+else
+    warn "No Vala compiler available in Termux. frida-core (server/gadget) \
+and the _frida binding require one. The build will attempt to proceed; if it \
+fails on Vala, you must provide a valac (Frida's fork) first."
 fi
 
 # --------------------------------------------------------------------------
@@ -89,6 +109,9 @@ fi
 # --------------------------------------------------------------------------
 export CC="${CC:-clang}"
 export CXX="${CXX:-clang++}"
+# Termux's sh may lack `which`; the project's ./configure calls it unless
+# PYTHON is already set. Export it to avoid "which: not found".
+export PYTHON="${PYTHON:-$(command -v python3 || command -v python)}"
 # Make absolutely sure no stale NDK var pushes releng down the cross path.
 unset ANDROID_NDK_ROOT ANDROID_NDK || true
 # Help meson/glib find Termux's pkg-config metadata.
@@ -104,16 +127,51 @@ cd "$SOURCE_ROOT"
 
 # --------------------------------------------------------------------------
 # Submodules (uses the forked releng pinned in .gitmodules)
+#
+# IMPORTANT: a shallow `submodule update --depth 1` only fetches the default
+# branch tip, which may NOT contain the exact gitlink commit. We therefore
+# sync the URL, then fetch + checkout the pinned commit explicitly so the
+# patched (Termux-aware) releng is actually used. Otherwise releng falls back
+# to the stock NDK cross-compile path and aborts with
+# "ANDROID_NDK_ROOT must be set".
 # --------------------------------------------------------------------------
 log "Synchronising git submodules..."
 git submodule sync --recursive
-git submodule update --init --recursive --depth 1 releng \
-    || die "Failed to fetch releng submodule"
+
+ensure_submodule() {
+    # $1 = submodule path
+    local sub="$1"
+    git submodule update --init "$sub" 2>/dev/null || true
+    local want
+    want="$(git ls-tree HEAD "$sub" | awk '{print $3}')"
+    if [ -n "$want" ] && [ -d "$sub/.git" -o -f "$sub/.git" ]; then
+        if ! git -C "$sub" cat-file -e "$want^{commit}" 2>/dev/null; then
+            log "Fetching pinned commit for $sub ($want)..."
+            git -C "$sub" fetch --depth 1 origin "$want" 2>/dev/null \
+                || git -C "$sub" fetch origin || true
+        fi
+        git -C "$sub" checkout -q "$want" 2>/dev/null \
+            || warn "Could not checkout $want in $sub"
+    fi
+}
+
+ensure_submodule releng
+# releng has its own nested submodules (meson, tomlkit).
 git -C releng submodule update --init --depth 1 || true
-git submodule update --init --recursive --depth 1 \
-    subprojects/frida-gum subprojects/frida-core \
-    subprojects/frida-python subprojects/frida-tools \
-    || die "Failed to fetch core submodules"
+
+for sub in subprojects/frida-gum subprojects/frida-core \
+           subprojects/frida-python subprojects/frida-tools; do
+    ensure_submodule "$sub"
+    git -C "$sub" submodule update --init --recursive --depth 1 2>/dev/null || true
+done
+
+# Verify the patched releng is in place; bail early with a clear message if not.
+if ! grep -q "_init_termux_native_config" releng/env_android.py 2>/dev/null; then
+    die "The patched (Termux-aware) releng is not checked out. Expected the \
+EduardoC3677/releng fork. Run: git submodule sync && git submodule update \
+--init releng, then re-run this script."
+fi
+log "Patched Termux-aware releng confirmed."
 
 # --------------------------------------------------------------------------
 # Clean if requested
