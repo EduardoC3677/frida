@@ -164,18 +164,38 @@ if [ "$WANT_SERVER" -eq 1 ]; then
     [ -n "$SERVER_BIN" ] || warn "no frida-server asset found; skipping server staging."
 fi
 
+TOOLS_WHEEL=""
+if fetch 'frida_tools-.*-py3-none-any\.whl$' tools.whl; then
+    TOOLS_WHEEL="$WORK/tools.whl"; verify "$TOOLS_WHEEL"
+else
+    warn "no frida-tools wheel in the release; will fall back to PyPI."
+fi
+
 # --------------------------------------------------------------------------
-# 4. Install the binding wheel + frida-tools, verify the import.
+# 4. Install the binding wheel + frida-tools (both from the release), verify.
 # --------------------------------------------------------------------------
 if [ -n "$WHEEL" ]; then
-    log "Installing frida binding wheel"
+    log "Installing frida binding wheel (pip)"
     pip install --force-reinstall --no-deps "$WHEEL" || die "wheel install failed"
 fi
 
-log "Installing frida-tools (pure-Python CLI)"
-pip install --no-build-isolation frida-tools 2>/dev/null \
-    || pip install frida-tools \
-    || warn "could not install frida-tools from PyPI; install it manually."
+if [ -n "$TOOLS_WHEEL" ]; then
+    log "Installing frida-tools wheel from the release (pip, no PyPI)"
+    # --no-deps so pip does not try to pull/replace the frida binding we just
+    # installed (the release wheel already matches it).
+    pip install --force-reinstall --no-deps "$TOOLS_WHEEL" \
+        || die "frida-tools wheel install failed"
+    # Pull the remaining pure-Python deps of frida-tools (colorama, pygments,
+    # prompt-toolkit, websockets) without touching the frida binding.
+    pip install "colorama>=0.2.7,<1.0.0" "prompt-toolkit>=2.0.0,<4.0.0" \
+                "pygments>=2.0.2,<3.0.0" "websockets>=13.0.0,<14.0.0" \
+        || warn "could not install some frida-tools dependencies; install them manually."
+else
+    log "Installing frida-tools from PyPI (fallback)"
+    pip install --no-build-isolation frida-tools 2>/dev/null \
+        || pip install frida-tools \
+        || warn "could not install frida-tools from PyPI; install it manually."
+fi
 
 log "Verifying the frida binding loads..."
 if python3 - <<'PY'

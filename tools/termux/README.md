@@ -37,9 +37,10 @@ bash tools/termux/termux-install-release.sh --no-server # solo tools en Termux
 ```
 
 El instalador descarga los assets vía la API de GitHub, verifica los
-`SHA256SUMS.txt`, instala el wheel + `frida-tools`, comprueba que `import frida`
-funciona, coloca `frida-server` con `su` y crea `frida-server-start` /
-`frida-remote`. Luego:
+`SHA256SUMS.txt`, instala con pip **ambos wheels del release** (el binding
+`frida` y `frida-tools` con sus agentes JS — sin descargar nada de PyPI ni
+compilar en el teléfono), comprueba que `import frida` funciona, coloca
+`frida-server` con `su` y crea `frida-server-start` / `frida-remote`. Luego:
 
 ```bash
 frida-server-start                 # arranca frida-server como root en :27042
@@ -92,13 +93,25 @@ export ANDROID_NDK_ROOT=$HOME/Android/ndk/29.0.14206865
 bash tools/termux/build-python-binding-cross.sh --arch arm64 --py-tag 3.13
 #   -> dist/frida-<ver>-cp37-abi3-android_24_aarch64.whl
 
-# (b) frida-server / inject / gadget arm64 (para el lado root):
+# (b) frida-tools (CLI: frida, frida-ps, frida-trace...) como wheel universal,
+#     construido desde fuente con sus agentes JS empaquetados (necesita node+npm):
+bash tools/termux/build-tools-wheel.sh
+#   -> dist/frida_tools-<ver>-py3-none-any.whl
+
+# (c) frida-server / inject / gadget arm64 (para el lado root):
 bash tools/termux/build-deb-cross.sh --arch arm64
 #   -> dist/frida_<ver>_aarch64.deb   (contiene bin/frida-server, etc.)
 ```
 
-Copia al teléfono el `.whl` y el binario `frida-server` (lo puedes sacar del
-`.deb` con `dpkg-deb -x`, queda en `.../usr/bin/frida-server`).
+Copia al teléfono los dos `.whl` y el binario `frida-server` (lo puedes sacar
+del `.deb` con `dpkg-deb -x`, queda en `.../usr/bin/frida-server`). Instálalos
+con pip sin tocar PyPI:
+
+```bash
+pip install --force-reinstall --no-deps frida-*-aarch64.whl       # binding
+pip install --force-reinstall --no-deps frida_tools-*-any.whl     # CLI
+pip install colorama prompt-toolkit pygments 'websockets<14'      # deps puras
+```
 
 Notas:
 - `build-python-binding-cross.sh` descarga automáticamente el `python_*.deb`

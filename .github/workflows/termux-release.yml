@@ -55,6 +55,11 @@ jobs:
             python3-setuptools python3-wheel curl unzip file
           python3 -m pip install --upgrade --user setuptools wheel
 
+      - name: Set up Node.js (for frida-tools JS agents)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Cache Android NDK ${{ env.NDK_VERSION }}
         id: cache-ndk
         uses: actions/cache@v4
@@ -102,6 +107,11 @@ jobs:
           bash tools/termux/build-python-binding-cross.sh \
             --arch "$ARCH" --py-tag "$PY_TAG" --jobs "$(nproc)"
 
+      - name: Build frida-tools wheel (universal, with JS agents)
+        run: |
+          set -euxo pipefail
+          bash tools/termux/build-tools-wheel.sh --jobs "$(nproc)"
+
       - name: Stage raw server/gadget + installer + checksums
         id: stage
         run: |
@@ -141,6 +151,7 @@ jobs:
             ## What's in here
             - `frida_${{ steps.vars.outputs.frida_version }}_aarch64.deb` — frida-server, frida-inject, frida-gadget (native arm64, run as root).
             - `frida-${{ steps.vars.outputs.frida_version }}*-abi3-android_24_aarch64.whl` — the `frida` Python binding (`_frida`) for Termux's Python (abi3, any Python 3.x).
+            - `frida_tools-*-py3-none-any.whl` — the `frida-tools` CLI (frida, frida-ps, frida-trace, ...) built from source with its JS agents/bridges bundled (no PyPI needed).
             - `frida-server-${{ steps.vars.outputs.frida_version }}-android-arm64` — raw server binary.
             - `frida-gadget-${{ steps.vars.outputs.frida_version }}-android-arm64.so` — raw gadget.
             - `termux-install-release.sh` — one-shot on-device installer.
@@ -150,6 +161,8 @@ jobs:
             ```sh
             curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.vars.outputs.release_tag }}/termux-install-release.sh | bash
             ```
+            It `pip install`s both wheels straight from this release (the binding and
+            frida-tools) — nothing is pulled from PyPI and nothing is compiled on-device.
             Then:
             ```sh
             frida-server-start                     # starts frida-server as root (su)
@@ -163,7 +176,8 @@ jobs:
             binding ships prebuilt in the wheel above.
           files: |
             dist/*.deb
-            dist/*.whl
+            dist/frida-*-abi3-android_*.whl
+            dist/frida_tools-*-py3-none-any.whl
             dist/frida-server-*-android-arm64
             dist/frida-gadget-*-android-arm64.so
             dist/termux-install-release.sh
