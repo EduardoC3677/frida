@@ -1,57 +1,126 @@
-# Frida en Termux (build nativo, Android arm64)
+# Frida para Termux / Android arm64 (modo remoto)
 
-Estos scripts compilan Frida **de forma nativa dentro de Termux**, usando el
-clang propio de Termux (Bionic), **sin NDK**. Esto es posible gracias a los
-parches en `releng/` que detectan Termux y configuran la toolchain del
-dispositivo en lugar de hacer cross-compile.
+Objetivo: usar **frida + frida-tools dentro de Termux** (prefix de Termux),
+conectándose por TCP a un **frida-server que corre con root** en el lado
+Android. Esta es la arquitectura recomendada y soportada oficialmente.
 
-## Qué se construye
+```
+  [ Lado Android, root/su ]                 [ Lado Termux, tu usuario ]
+  frida-server (arm64)                       frida / frida-ps / frida-trace ...
+    -l 127.0.0.1:27042   <===== TCP =====>   se conectan con  -H 127.0.0.1:27042
+```
 
-- `frida-server` — daemon principal
-- `frida-gadget` — librería para preload
-- `frida-inject` — inyección puntual de scripts
-- `_frida` — binding de Python
-- `frida`, `frida-ps`, `frida-trace`, `frida-ls-devices`, `frida-kill`,
-  `frida-discover` — herramientas CLI (`frida-tools`)
+Por qué remoto: `frida-server` necesita **root** para instrumentar otras apps,
+pero Termux corre sin privilegios. Por eso el server vive en el lado Android
+(root) y frida-tools en Termux se conecta por TCP (`-H host:puerto`).
 
-## Requisitos
+---
 
-- Termux (probado en 0.119.x) en Android arm64 (probado en Android 16 / API 36).
-- Espacio: varios GB. RAM: cuanta más mejor (el build de frida-core es pesado).
-- Tiempo: el primer build puede tardar **horas** en el dispositivo.
+## Por qué `pip install frida` falla en Termux
 
-Los scripts instalan automáticamente los paquetes de Termux que faltan
-(`clang`, `python`, `glib`, `golang`, `nodejs-lts`, etc.).
+`frida-tools` es Python puro, pero depende del módulo `frida`, que es la
+extensión C `_frida`. Al hacer `pip install frida` en el teléfono, pip intenta
+**compilar** `_frida` desde fuente y necesita el *devkit* de frida-core
+(`frida-core.h` + `libfrida-core.a`), que no puede generar en aislamiento:
 
-## Uso
+```
+frida/_frida/extension.c:8:10: fatal error: 'frida-core.h' file not found
+```
 
-### Opción A — compilar e instalar directamente
+Solución: **cross-compilamos** el binding en un PC (con el NDK) y producimos un
+**wheel** ya construido. La extensión usa `Py_LIMITED_API` (abi3), así que un
+único `.so` sirve para cualquier Python 3.x de Termux.
+
+---
+
+## Parte 1 — En el PC Linux x86_64 (cross-compile)
+
+Requisitos: `python3`, `ninja`, `dpkg-deb`, y el **Android NDK r29**
+(`export ANDROID_NDK_ROOT=$HOME/Android/ndk/29.0.14206865`).
 
 ```bash
 git clone --recurse-submodules https://github.com/EduardoC3677/frida.git
 cd frida
+export ANDROID_NDK_ROOT=$HOME/Android/ndk/29.0.14206865
+
+# (a) El binding Python (frida) como wheel arm64 instalable:
+bash tools/termux/build-python-binding-cross.sh --arch arm64 --py-tag 3.13
+#   -> dist/frida-<ver>-cp37-abi3-android_24_aarch64.whl
+
+# (b) frida-server / inject / gadget arm64 (para el lado root):
+bash tools/termux/build-deb-cross.sh --arch arm64
+#   -> dist/frida_<ver>_aarch64.deb   (contiene bin/frida-server, etc.)
+```
+
+Copia al teléfono el `.whl` y el binario `frida-server` (lo puedes sacar del
+`.deb` con `dpkg-deb -x`, queda en `.../usr/bin/frida-server`).
+
+Notas:
+- `build-python-binding-cross.sh` descarga automáticamente el `python_*.deb`
+  de Termux para obtener los headers + `libpython` del target. Usa
+  `--python-deb RUTA_O_URL` para fijar otra versión, y `--py-tag 3.x` para
+  alinear el nombre.
+- Con `--so-only` produce solo `dist/_frida.abi3.so` (sin wheel).
+
+## Parte 2 — En el teléfono (Termux)
+
+```bash
+# Instala binding + frida-tools y configura el modo remoto:
+bash tools/termux/termux-setup-remote.sh \
+     --wheel frida-*-aarch64.whl \
+     --server frida-server \
+     --port 27042
+```
+
+Eso:
+1. Instala el wheel (`frida`) y `frida-tools` en el Python de Termux.
+2. Verifica que el módulo `frida` **importa** de verdad.
+3. Coloca `frida-server` en `/data/local/tmp` vía `su` (root).
+4. Crea dos ayudantes: `frida-server-start` y `frida-remote`.
+
+### Uso diario
+
+```bash
+frida-server-start                 # arranca frida-server como root en :27042
+frida-ps -H 127.0.0.1:27042        # lista procesos (modo remoto)
+frida-remote ps                    # equivalente abreviado
+frida-remote trace -n com.app -i 'open*'
+frida-remote -U com.app            # REPL (o: frida -H 127.0.0.1:27042 com.app)
+```
+
+Si tu `frida` es una versión `*.dev*` y pip se queja al instalar `frida-tools`,
+usa `pip install --pre frida-tools` o fija una versión de tools compatible
+(frida-tools 14.x pide `frida>=17.10,<18`).
+
+---
+
+## Alternativas
+
+### Camino on-device (experimental, sin NDK)
+
+Compila Frida **dentro** de Termux con su propio clang (parches en `releng/`):
+
+```bash
 bash tools/termux/termux-build-install.sh --jobs $(nproc)
 ```
 
-Opciones: `--clean` (borra `build/` antes), `--no-install` (solo compila),
-`--prefix DIR` (prefijo alternativo).
+Puede tardar horas y fallar en componentes que asumen glibc. El modo remoto
+(cross en PC) es mucho más fiable.
 
-### Opción B — generar un .deb e instalarlo
+### Empaquetar el servidor como .deb
 
-```bash
-bash tools/termux/build-deb.sh --jobs $(nproc)
-dpkg -i dist/frida_*_aarch64.deb
-```
+`build-deb.sh` (on-device) y `build-deb-cross.sh` (cross en PC) generan un
+`.deb` aarch64 con `frida-server`, `frida-inject` y `frida-gadget.so`.
 
-El `.deb` se genera para la arquitectura `aarch64` de Termux y al instalarlo
-deja todas las herramientas en el prefijo de Termux automáticamente.
+---
 
-## Notas
+## Sobre `termux/ndk-toolchain-clang-with-flang`
 
-- Si `frida-core` exige el fork de Vala de Frida y el `valac` de Termux no
-  basta, el build lo indicará; en ese caso habrá que compilar ese componente
-  aparte. El binding de Python y las herramientas CLI no lo necesitan.
-- El build usa `--without-prebuilds=toolchain,sdk:build,sdk:host` para no
-  descargar bundles glibc que no corren bajo Bionic: todo se compila de fuente.
-- Variables de entorno respetadas: `CC`, `CXX`, `CFLAGS`, `CXXFLAGS`,
-  `LDFLAGS`, `CPPFLAGS`, `PKG_CONFIG_PATH`, `PREFIX`.
+Ese repo empaqueta el clang del NDK de Android (más Flang) compilado para
+**host x86_64**: es el toolchain LLVM que Termux usa en su CI para
+cross-compilar. Corre en un PC x86_64 y emite binarios arm64; **no** arranca
+dentro del teléfono. Además trae solo el LLVM del host (`package-install`),
+**no** el sysroot de Bionic ni la estructura `toolchains/llvm/prebuilt/...`
+que Frida espera en `ANDROID_NDK_ROOT`. Por eso, para el cross-build usa el
+**NDK r29 oficial** de Google (incluye el sysroot); ese repo solo es útil si
+ya tienes el sysroot aparte y quieres el clang/Flang más nuevo.

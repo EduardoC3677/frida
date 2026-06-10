@@ -1,4 +1,7 @@
 /build/
+/build-*/
+/dist/
+/stage-deb*/
 /deps/
 /releng/__pycache__/
 /releng/modules/frida-gadget-ios/*.dylib
