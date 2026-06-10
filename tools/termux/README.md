@@ -14,6 +14,40 @@ Por qué remoto: `frida-server` necesita **root** para instrumentar otras apps,
 pero Termux corre sin privilegios. Por eso el server vive en el lado Android
 (root) y frida-tools en Termux se conecta por TCP (`-H host:puerto`).
 
+### Auto-elevación con `su` (KernelSU / Magisk / APatch)
+
+Este fork modifica `frida-server` y `frida-inject` para que, en Android, se
+**re-ejecuten automáticamente con `su`** si los lanzas sin root (lo normal en
+Termux). Esto resuelve el error clásico:
+
+```
+Unable to load SELinux policy from the kernel: Failed to open file
+"/sys/fs/selinux/policy": Permission denied
+```
+
+que ocurre cuando el server corre como tu usuario de app y no puede leer la
+política SELinux, hacer ptrace ni escribir en `/data/local/tmp`.
+
+Al arrancar buscan un `su` usable en este orden: `/data/adb/ksu/bin/su`
+(KernelSU), `/data/adb/ap/bin/su` (APatch), `/data/adb/magisk/su` (Magisk),
+`/sbin/su`, `/system/bin/su`, `/system/xbin/su`, y por último `su` en el PATH.
+Encontrado uno, hacen `su -c "<binario> <args>"` y el server real corre como
+uid 0. Un guard interno evita bucles de re-exec.
+
+Así, desde Termux basta con:
+
+```bash
+frida-server            # se auto-eleva con su; KernelSU pedirá permiso una vez
+frida-server -l 127.0.0.1:27042
+```
+
+Para desactivar la auto-elevación (correr sin privilegios a propósito):
+
+```bash
+FRIDA_NO_SU=1 frida-server
+```
+
+
 ---
 
 ## La vía más fácil — instalar desde un GitHub Release
